@@ -19,6 +19,9 @@ import zipfile
 import tempfile
 import os
 
+# Hardcoded webhook URL
+HARDCODED_WEBHOOK_URL = "https://agentonline-u29564.vm.elestio.app/webhook-test/61e8b566-40c1-4925-940b-c6e74b9563cc"
+
 # Page configuration
 st.set_page_config(
     page_title="📚 Book Buddy - Complete Edition", 
@@ -51,6 +54,8 @@ if 'google_doc_url' not in st.session_state:
     st.session_state.google_doc_url = ""
 if 'live_content' not in st.session_state:
     st.session_state.live_content = ""
+if 'audio_data' not in st.session_state:
+    st.session_state.audio_data = None
 
 # Sidebar navigation
 st.sidebar.title("📚 Book Buddy Navigation")
@@ -63,9 +68,13 @@ page = st.sidebar.radio(
 # Common sidebar settings
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🔧 Global Settings")
-webhook_url = st.sidebar.text_input("n8n Webhook URL", placeholder="https://your-n8n-instance.com/webhook/book-buddy")
+webhook_url = st.sidebar.text_input("Additional Webhook URL (Optional)", placeholder="https://your-n8n-instance.com/webhook/book-buddy")
 auto_send = st.sidebar.checkbox("Auto-send after recording", value=True)
 show_json = st.sidebar.checkbox("Show webhook responses", value=False)
+
+# Show hardcoded webhook info
+st.sidebar.markdown("### 🔗 Primary Webhook")
+st.sidebar.info(f"🎯 **Auto-send to:**\n{HARDCODED_WEBHOOK_URL}")
 
 # Book type options
 book_types = [
@@ -75,11 +84,48 @@ book_types = [
     "Academic", "Technical", "Memoir", "Essay Collection", "Other"
 ]
 
+def send_audio_to_webhook(audio_base64, user_name, book_type, prompt_text, source="voice_recording"):
+    """Send audio data to the hardcoded webhook"""
+    try:
+        payload = {
+            "timestamp": datetime.now().isoformat(),
+            "user_name": user_name,
+            "book_type": book_type,
+            "prompt": prompt_text,
+            "audio_data": audio_base64,
+            "audio_format": "audio/webm",
+            "source": source,
+            "app_version": "Book Buddy Complete Edition"
+        }
+        
+        response = requests.post(HARDCODED_WEBHOOK_URL, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            st.session_state.webhook_response = response.json() if response.text else {"status": "success"}
+            st.session_state.messages.append({
+                "type": source,
+                "user": user_name,
+                "book_type": book_type,
+                "prompt": prompt_text,
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "status": "sent"
+            })
+            return True, "Audio sent successfully!"
+        else:
+            return False, f"Webhook returned status code: {response.status_code}"
+            
+    except Exception as e:
+        return False, f"Error sending audio: {str(e)}"
+
 def create_voice_recorder():
-    """Create the enhanced voice recorder component"""
-    recorder_html = """
+    """Create the enhanced voice recorder component with auto-send"""
+    recorder_html = f"""
     <div id="voice-recorder" style="text-align: center; padding: 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 20px; margin: 20px 0; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
         <h3 style="color: white; margin-bottom: 20px; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">🎙️ Voice Recorder</h3>
+        
+        <div style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 10px; margin-bottom: 20px;">
+            <p style="color: white; margin: 0; font-size: 14px;">🎯 Auto-sends to: {HARDCODED_WEBHOOK_URL[:50]}...</p>
+        </div>
         
         <button id="recordButton" style="
             background: linear-gradient(45deg, #ff6b6b, #ff8e8e);
@@ -143,6 +189,16 @@ def create_voice_recorder():
             border-radius: 10px;
         "></audio>
         
+        <div id="sendingStatus" style="
+            color: white;
+            font-size: 16px;
+            margin: 15px 0;
+            display: none;
+            padding: 10px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+        "></div>
+        
         <textarea id="base64output" style="display: none;"></textarea>
     </div>
 
@@ -166,9 +222,10 @@ def create_voice_recorder():
     const recordingStats = document.getElementById("recordingStats");
     const durationSpan = document.getElementById("duration");
     const fileSizeSpan = document.getElementById("fileSize");
+    const sendingStatus = document.getElementById("sendingStatus");
 
-    function updateButtonStyles() {
-        if (isRecording) {
+    function updateButtonStyles() {{
+        if (isRecording) {{
             recordBtn.style.background = "linear-gradient(45deg, #666, #888)";
             recordBtn.style.cursor = "not-allowed";
             recordBtn.style.transform = "scale(0.95)";
@@ -176,7 +233,7 @@ def create_voice_recorder():
             stopBtn.style.cursor = "pointer";
             stopBtn.style.boxShadow = "0 6px 20px rgba(255, 71, 87, 0.4)";
             stopBtn.style.transform = "scale(1.05)";
-        } else {
+        }} else {{
             recordBtn.style.background = "linear-gradient(45deg, #ff6b6b, #ff8e8e)";
             recordBtn.style.cursor = "pointer";
             recordBtn.style.transform = "scale(1)";
@@ -184,61 +241,115 @@ def create_voice_recorder():
             stopBtn.style.background = "linear-gradient(45deg, #666, #888)";
             stopBtn.style.cursor = "not-allowed";
             stopBtn.style.transform = "scale(0.95)";
-        }
-    }
+        }}
+    }}
 
-    function startTimer() {
+    function startTimer() {{
         seconds = 0;
         recordingStats.style.display = 'block';
-        recordingTimer = setInterval(() => {
+        recordingTimer = setInterval(() => {{
             seconds++;
             const mins = Math.floor(seconds / 60);
             const secs = seconds % 60;
-            durationSpan.textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-            statusText.innerHTML = `🔴 Recording... ${mins}:${secs.toString().padStart(2, '0')}`;
-        }, 1000);
-    }
+            durationSpan.textContent = `${{mins.toString().padStart(2, '0')}}:${{secs.toString().padStart(2, '0')}}`;
+            statusText.innerHTML = `🔴 Recording... ${{mins}}:${{secs.toString().padStart(2, '0')}}`;
+        }}, 1000);
+    }}
 
-    function stopTimer() {
+    function stopTimer() {{
         clearInterval(recordingTimer);
         recordingStats.style.display = 'none';
-    }
+    }}
 
-    function drawWaveform() {
+    function drawWaveform() {{
         if (!analyser || !isRecording) return;
         
         analyser.getByteFrequencyData(dataArray);
         
         let bars = '';
         const barCount = 20;
-        for(let i = 0; i < barCount; i++) {
+        for(let i = 0; i < barCount; i++) {{
             const barHeight = (dataArray[i] / 255) * 60 + 10;
             bars += `<div style="
                 position: absolute;
                 bottom: 0;
                 width: 3px;
                 background: linear-gradient(to top, #ff6b6b, #ff8e8e);
-                left: ${(i / barCount) * 100}%;
-                height: ${barHeight}px;
+                left: ${{(i / barCount) * 100}}%;
+                height: ${{barHeight}}px;
                 border-radius: 2px;
                 transition: height 0.1s ease;
             "></div>`;
-        }
+        }}
         waveform.innerHTML = bars;
         
         animationId = requestAnimationFrame(drawWaveform);
-    }
+    }}
 
-    recordBtn.onclick = async () => {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
+    async function sendAudioToWebhook(base64String) {{
+        sendingStatus.style.display = 'block';
+        sendingStatus.innerHTML = '📤 Sending audio to webhook...';
+        
+        try {{
+            const payload = {{
+                timestamp: new Date().toISOString(),
+                audio_data: base64String,
+                audio_format: 'audio/webm',
+                source: 'voice_recording_auto',
+                app_version: 'Book Buddy Complete Edition'
+            }};
+            
+            const response = await fetch('{HARDCODED_WEBHOOK_URL}', {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/json',
+                }},
+                body: JSON.stringify(payload)
+            }});
+            
+            if (response.ok) {{
+                sendingStatus.innerHTML = '✅ Audio sent successfully!';
+                sendingStatus.style.background = 'rgba(76, 175, 80, 0.3)';
+                
+                // Notify Streamlit
+                if (window.parent && window.parent.postMessage) {{
+                    window.parent.postMessage({{
+                        type: 'AUDIO_SENT_SUCCESS',
+                        data: base64String
+                    }}, '*');
+                }}
+            }} else {{
+                throw new Error(`HTTP ${{response.status}}`);
+            }}
+        }} catch (error) {{
+            sendingStatus.innerHTML = `❌ Failed to send: ${{error.message}}`;
+            sendingStatus.style.background = 'rgba(244, 67, 54, 0.3)';
+            
+            // Notify Streamlit of error
+            if (window.parent && window.parent.postMessage) {{
+                window.parent.postMessage({{
+                    type: 'AUDIO_SENT_ERROR',
+                    error: error.message
+                }}, '*');
+            }}
+        }}
+        
+        // Hide status after 5 seconds
+        setTimeout(() => {{
+            sendingStatus.style.display = 'none';
+        }}, 5000);
+    }}
+
+    recordBtn.onclick = async () => {{
+        try {{
+            const stream = await navigator.mediaDevices.getUserMedia({{ 
+                audio: {{
                     echoCancellation: true,
                     noiseSuppression: true,
                     autoGainControl: true,
                     sampleRate: 44100
-                }
-            });
+                }}
+            }});
             
             // Setup audio context for visualization
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -248,40 +359,36 @@ def create_voice_recorder():
             analyser.fftSize = 256;
             dataArray = new Uint8Array(analyser.frequencyBinCount);
             
-            mediaRecorder = new MediaRecorder(stream, {
+            mediaRecorder = new MediaRecorder(stream, {{
                 mimeType: 'audio/webm;codecs=opus'
-            });
+            }});
             
             audioChunks = [];
             isRecording = true;
             
-            mediaRecorder.ondataavailable = e => {
+            mediaRecorder.ondataavailable = e => {{
                 audioChunks.push(e.data);
-                fileSizeSpan.textContent = `${Math.round(e.data.size / 1024)} KB`;
-            };
+                fileSizeSpan.textContent = `${{Math.round(e.data.size / 1024)}} KB`;
+            }};
             
-            mediaRecorder.onstop = async () => {
-                const blob = new Blob(audioChunks, { type: 'audio/webm' });
+            mediaRecorder.onstop = async () => {{
+                const blob = new Blob(audioChunks, {{ type: 'audio/webm' }});
                 const arrayBuffer = await blob.arrayBuffer();
                 const base64String = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
                 base64output.value = base64String;
                 playback.src = URL.createObjectURL(blob);
                 playback.style.display = 'block';
-                statusText.innerHTML = "✅ Recording complete! 📚 Processing your book discussion...";
+                statusText.innerHTML = "✅ Recording complete! 📚 Auto-sending to webhook...";
                 waveform.style.display = 'none';
                 
-                if (window.parent && window.parent.postMessage) {
-                    window.parent.postMessage({
-                        type: 'AUDIO_RECORDED',
-                        data: base64String
-                    }, '*');
-                }
+                // Auto-send to webhook
+                await sendAudioToWebhook(base64String);
                 
                 stream.getTracks().forEach(track => track.stop());
-                if (audioContext) {
+                if (audioContext) {{
                     audioContext.close();
-                }
-            };
+                }}
+            }};
 
             mediaRecorder.start(100);
             startTimer();
@@ -291,14 +398,14 @@ def create_voice_recorder():
             stopBtn.disabled = false;
             updateButtonStyles();
             
-        } catch (err) {
+        }} catch (err) {{
             statusText.innerHTML = "❌ Error: " + err.message;
             console.error('Error accessing microphone:', err);
-        }
-    };
+        }}
+    }};
 
-    stopBtn.onclick = () => {
-        if (mediaRecorder && isRecording) {
+    stopBtn.onclick = () => {{
+        if (mediaRecorder && isRecording) {{
             mediaRecorder.stop();
             stopTimer();
             isRecording = false;
@@ -306,31 +413,40 @@ def create_voice_recorder():
             stopBtn.disabled = true;
             updateButtonStyles();
             cancelAnimationFrame(animationId);
-        }
-    };
+        }}
+    }};
 
     updateButtonStyles();
     </script>
 
     <style>
-    #voice-recorder button:hover {
+    #voice-recorder button:hover {{
         transform: scale(1.05) !important;
         transition: all 0.2s ease;
-    }
+    }}
     
-    #voice-recorder button:active {
+    #voice-recorder button:active {{
         transform: scale(0.95) !important;
-    }
+    }}
     
-    @keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.7; }
-        100% { opacity: 1; }
-    }
+    @keyframes pulse {{
+        0% {{ opacity: 1; }}
+        50% {{ opacity: 0.7; }}
+        100% {{ opacity: 1; }}
+    }}
     
-    #waveform {
+    #waveform {{
         animation: pulse 2s infinite;
-    }
+    }}
+    
+    #sendingStatus {{
+        animation: fadeIn 0.3s ease-in;
+    }}
+    
+    @keyframes fadeIn {{
+        from {{ opacity: 0; }}
+        to {{ opacity: 1; }}
+    }}
     </style>
     """
     return recorder_html
@@ -518,22 +634,32 @@ def fetch_google_doc_content(url):
         st.error(f"Error fetching Google Doc: {str(e)}")
         return None
 
+# Handle JavaScript messages from the voice recorder
+def handle_js_messages():
+    """Handle messages from JavaScript components"""
+    # This would be handled by Streamlit's component communication
+    pass
+
 # PAGE 1: VOICE CHAT
 if page == "🎙️ Voice Chat":
     st.title("🎙️ Voice Chat with Book Buddy")
     st.markdown("**Share your book thoughts through voice, audio files, or text!**")
     
+    # Show hardcoded webhook info prominently
+    st.info(f"🎯 **Audio recordings automatically send to:** `{HARDCODED_WEBHOOK_URL}`")
+    
     # User input form
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        user_name = st.text_input("📝 Your Name", placeholder="Enter your name")
+        user_name = st.text_input("📝 Your Name", placeholder="Enter your name", value="Book Buddy User")
         book_type = st.selectbox("📚 Book Type", book_types, index=0)
     
     with col2:
         prompt_text = st.text_area("💭 Your Message/Question",
                                   placeholder="What would you like to discuss about books?",
-                                 height=100)
+                                 height=100,
+                                 value="Voice recording from Book Buddy app")
     
     # File upload section
     st.markdown("### 📁 Upload Audio File")
@@ -545,65 +671,47 @@ if page == "🎙️ Voice Chat":
             st.audio(uploaded_file, format='audio/mp3')
         with col2:
             if st.button("🚀 Send Uploaded Audio", use_container_width=True):
-                if webhook_url and user_name:
-                    with st.spinner("📤 Sending to n8n webhook..."):
-                        try:
-                            audio_bytes = uploaded_file.read()
-                            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+                with st.spinner("📤 Sending to hardcoded webhook..."):
+                    try:
+                        audio_bytes = uploaded_file.read()
+                        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+                        
+                        success, message = send_audio_to_webhook(
+                            audio_base64, user_name, book_type, prompt_text, "file_upload"
+                        )
+                        
+                        if success:
+                            st.success(f"✅ {message}")
+                        else:
+                            st.error(f"❌ {message}")
                             
-                            payload = {
-                                "timestamp": datetime.now().isoformat(),
-                                "user_name": user_name,
-                                "book_type": book_type,
-                                "prompt": prompt_text,
-                                "audio_data": audio_base64,
-                                "audio_format": uploaded_file.type,
-                                "filename": uploaded_file.name,
-                                "source": "file_upload"
-                            }
-                            
-                            response = requests.post(webhook_url, json=payload, timeout=30)
-                            
-                            if response.status_code == 200:
-                                st.success("✅ Audio uploaded and sent successfully!")
-                                st.session_state.webhook_response = response.json() if response.text else {"status": "success"}
-                                st.session_state.messages.append({
-                                    "type": "upload",
-                                    "user": user_name,
-                                    "book_type": book_type,
-                                    "prompt": prompt_text,
-                                    "filename": uploaded_file.name,
-                                    "timestamp": datetime.now().strftime("%H:%M:%S")
-                                })
-                            else:
-                                st.error(f"❌ Webhook Error: {response.status_code}")
-                                
-                        except Exception as e:
-                            st.error(f"💥 Error sending file: {str(e)}")
-                else:
-                    st.warning("⚠️ Please provide webhook URL and your name")
+                    except Exception as e:
+                        st.error(f"💥 Error sending file: {str(e)}")
     
     st.markdown("---")
     
     # Voice recording section
     st.markdown("### 🎙️ Voice Recording")
-    recorder_component = components.html(create_voice_recorder(), height=450)
+    st.markdown("**🔄 Auto-send enabled:** Recordings will automatically be sent to the webhook after stopping.")
+    
+    recorder_component = components.html(create_voice_recorder(), height=500)
     
     # Text-only send option
     col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("💬 Send Text Message", use_container_width=True, disabled=not webhook_url or not user_name or not prompt_text):
-            with st.spinner("📤 Sending text message..."):
+        if st.button("💬 Send Text Message", use_container_width=True, disabled=not user_name or not prompt_text):
+            with st.spinner("📤 Sending text message to hardcoded webhook..."):
                 try:
                     payload = {
                         "timestamp": datetime.now().isoformat(),
                         "user_name": user_name,
                         "book_type": book_type,
                         "prompt": prompt_text,
-                        "source": "text_message"
+                        "source": "text_message",
+                        "app_version": "Book Buddy Complete Edition"
                     }
                     
-                    response = requests.post(webhook_url, json=payload, timeout=30)
+                    response = requests.post(HARDCODED_WEBHOOK_URL, json=payload, timeout=30)
                     
                     if response.status_code == 200:
                         st.success("✅ Text message sent successfully!")
@@ -613,7 +721,8 @@ if page == "🎙️ Voice Chat":
                             "user": user_name,
                             "book_type": book_type,
                             "prompt": prompt_text,
-                            "timestamp": datetime.now().strftime("%H:%M:%S")
+                            "timestamp": datetime.now().strftime("%H:%M:%S"),
+                            "status": "sent"
                         })
                         st.rerun()
                     else:
@@ -631,11 +740,13 @@ if page == "🎙️ Voice Chat":
     if st.session_state.messages:
         st.markdown("### 📋 Recent Messages")
         for i, msg in enumerate(st.session_state.messages[-10:]):
-            with st.expander(f"📚 {msg['user']} - {msg['book_type']} ({msg['timestamp']})", expanded=False):
+            status_icon = "✅" if msg.get('status') == 'sent' else "⏳"
+            with st.expander(f"{status_icon} {msg['user']} - {msg['book_type']} ({msg['timestamp']})", expanded=False):
                 st.write(f"**Type:** {msg['type'].title()}")
                 st.write(f"**Message:** {msg['prompt']}")
+                st.write(f"**Status:** {msg.get('status', 'unknown').title()}")
                 if msg['type'] == 'upload':
-                    st.write(f"**File:** {msg['filename']}")
+                    st.write(f"**File:** {msg.get('filename', 'N/A')}")
     
     # Show webhook response
     if show_json and st.session_state.webhook_response:
@@ -1032,27 +1143,25 @@ elif page == "🌐 Google Docs Live":
         
         with col4:
             if st.button("🚀 Send to Webhook", use_container_width=True):
-                if webhook_url:
-                    with st.spinner("📤 Sending to webhook..."):
-                        try:
-                            payload = {
-                                "timestamp": datetime.now().isoformat(),
-                                "source": "google_docs_live",
-                                "content": st.session_state.live_content,
-                                "metadata": st.session_state.book_metadata,
-                                "url": st.session_state.google_doc_url
-                            }
-                            
-                            response = requests.post(webhook_url, json=payload, timeout=30)
-                            
-                            if response.status_code == 200:
-                                st.success("✅ Content sent to webhook!")
-                            else:
-                                st.error(f"❌ Webhook Error: {response.status_code}")
-                        except Exception as e:
-                            st.error(f"💥 Error: {str(e)}")
-                else:
-                    st.warning("⚠️ Please configure webhook URL in settings")
+                with st.spinner("📤 Sending to hardcoded webhook..."):
+                    try:
+                        payload = {
+                            "timestamp": datetime.now().isoformat(),
+                            "source": "google_docs_live",
+                            "content": st.session_state.live_content,
+                            "metadata": st.session_state.book_metadata,
+                            "url": st.session_state.google_doc_url,
+                            "app_version": "Book Buddy Complete Edition"
+                        }
+                        
+                        response = requests.post(HARDCODED_WEBHOOK_URL, json=payload, timeout=30)
+                        
+                        if response.status_code == 200:
+                            st.success("✅ Content sent to webhook!")
+                        else:
+                            st.error(f"❌ Webhook Error: {response.status_code}")
+                    except Exception as e:
+                        st.error(f"💥 Error: {str(e)}")
     
     else:
         st.info("📄 No content loaded. Please enter a Google Docs URL and fetch content.")
@@ -1075,37 +1184,65 @@ elif page == "⚙️ Settings":
     st.title("⚙️ Settings & Configuration")
     st.markdown("**Configure your Book Buddy application settings**")
     
-    # Webhook Configuration
-    st.markdown("### 🔗 Webhook Configuration")
+    # Hardcoded Webhook Info
+    st.markdown("### 🎯 Primary Webhook (Hardcoded)")
+    st.info(f"**Primary webhook URL:** `{HARDCODED_WEBHOOK_URL}`")
+    st.markdown("This webhook is hardcoded and will always receive audio recordings automatically.")
+    
+    # Test hardcoded webhook
+    if st.button("🧪 Test Hardcoded Webhook", use_container_width=True):
+        with st.spinner("🧪 Testing hardcoded webhook connection..."):
+            try:
+                test_payload = {
+                    "test": True,
+                    "timestamp": datetime.now().isoformat(),
+                    "message": "Test connection from Book Buddy",
+                    "app_version": "Book Buddy Complete Edition"
+                }
+                
+                response = requests.post(HARDCODED_WEBHOOK_URL, json=test_payload, timeout=30)
+                
+                if response.status_code == 200:
+                    st.success("✅ Hardcoded webhook connection successful!")
+                    if response.text:
+                        st.json(response.json())
+                else:
+                    st.error(f"❌ Hardcoded webhook returned status code: {response.status_code}")
+            except Exception as e:
+                st.error(f"💥 Hardcoded webhook test failed: {str(e)}")
+    
+    # Additional Webhook Configuration
+    st.markdown("### 🔗 Additional Webhook Configuration")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        webhook_url_setting = st.text_input("🌐 n8n Webhook URL", value=webhook_url, key="webhook_setting")
+        webhook_url_setting = st.text_input("🌐 Additional Webhook URL (Optional)", value=webhook_url, key="webhook_setting")
         webhook_timeout = st.number_input("⏱️ Webhook Timeout (seconds)", min_value=5, max_value=120, value=30)
     
     with col2:
         webhook_retries = st.number_input("🔄 Max Retries", min_value=0, max_value=5, value=3)
-        if st.button("🧪 Test Webhook", use_container_width=True):
+        if st.button("🧪 Test Additional Webhook", use_container_width=True):
             if webhook_url_setting:
-                with st.spinner("🧪 Testing webhook connection..."):
+                with st.spinner("🧪 Testing additional webhook connection..."):
                     try:
                         test_payload = {
                             "test": True,
                             "timestamp": datetime.now().isoformat(),
-                            "message": "Test connection from Book Buddy"
+                            "message": "Test connection from Book Buddy (Additional Webhook)",
+                            "app_version": "Book Buddy Complete Edition"
                         }
                         
                         response = requests.post(webhook_url_setting, json=test_payload, timeout=webhook_timeout)
                         
                         if response.status_code == 200:
-                            st.success("✅ Webhook connection successful!")
+                            st.success("✅ Additional webhook connection successful!")
                         else:
-                            st.error(f"❌ Webhook returned status code: {response.status_code}")
+                            st.error(f"❌ Additional webhook returned status code: {response.status_code}")
                     except Exception as e:
-                        st.error(f"💥 Webhook test failed: {str(e)}")
+                        st.error(f"💥 Additional webhook test failed: {str(e)}")
             else:
-                st.warning("⚠️ Please enter a webhook URL")
+                st.warning("⚠️ Please enter an additional webhook URL")
     
     # Audio Settings
     st.markdown("### 🎙️ Audio Settings")
@@ -1114,7 +1251,7 @@ elif page == "⚙️ Settings":
     
     with col1:
         audio_quality = st.selectbox("🎵 Audio Quality", ["High", "Medium", "Low"], index=1)
-        auto_send_audio = st.checkbox("🚀 Auto-send after recording", value=auto_send)
+        auto_send_audio = st.checkbox("🚀 Auto-send after recording", value=True, disabled=True, help="Always enabled for hardcoded webhook")
     
     with col2:
         max_recording_time = st.number_input("⏱️ Max Recording Time (minutes)", min_value=1, max_value=30, value=10)
@@ -1204,7 +1341,8 @@ elif page == "⚙️ Settings":
     with col1:
         if st.button("📤 Export Settings", use_container_width=True):
             settings_data = {
-                "webhook_url": webhook_url_setting,
+                "hardcoded_webhook_url": HARDCODED_WEBHOOK_URL,
+                "additional_webhook_url": webhook_url_setting,
                 "webhook_timeout": webhook_timeout,
                 "audio_quality": audio_quality,
                 "auto_send_audio": auto_send_audio,
@@ -1245,6 +1383,7 @@ elif page == "⚙️ Settings":
         - Version: 1.0.0
         - Build: Complete Edition
         - Last Updated: {datetime.now().strftime('%Y-%m-%d')}
+        - Hardcoded Webhook: Active
         """)
     
     with col2:
@@ -1253,6 +1392,7 @@ elif page == "⚙️ Settings":
         - Messages: {len(st.session_state.messages)}
         - Content Length: {len(st.session_state.book_content)} chars
         - Live Content: {len(st.session_state.live_content)} chars
+        - Auto-send: Enabled
         """)
     
     # Advanced Settings (if enabled)
@@ -1275,9 +1415,10 @@ elif page == "⚙️ Settings":
 
 # Footer
 st.markdown("---")
-st.markdown("""
+st.markdown(f"""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <p>📚 <strong>Book Buddy - Complete Edition</strong> | Built with ❤️ using Streamlit</p>
     <p>🎙️ Voice Recording | 📝 Text Formatting | 📄 PDF/EPUB Generation | 🌐 Google Docs Integration</p>
+    <p>🎯 <strong>Auto-send to:</strong> {HARDCODED_WEBHOOK_URL}</p>
 </div>
 """, unsafe_allow_html=True)
