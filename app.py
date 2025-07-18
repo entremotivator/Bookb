@@ -31,7 +31,7 @@ st.set_page_config(
 # Custom CSS for better styling
 st.markdown("""
 <style>
-    .main-header {
+    .main-header {{
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 2rem;
         border-radius: 15px;
@@ -39,50 +39,50 @@ st.markdown("""
         color: white;
         text-align: center;
         box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-    }
+    }}
     
-    .section-card {
+    .section-card {{
         background: white;
         padding: 1.5rem;
         border-radius: 12px;
         box-shadow: 0 4px 16px rgba(0,0,0,0.1);
         margin-bottom: 1.5rem;
         border: 1px solid #e0e0e0;
-    }
+    }}
     
-    .status-success {
+    .status-success {{
         background: linear-gradient(135deg, #4CAF50, #45a049);
         color: white;
         padding: 1rem;
         border-radius: 8px;
         margin: 1rem 0;
-    }
+    }}
     
-    .status-error {
+    .status-error {{
         background: linear-gradient(135deg, #f44336, #d32f2f);
         color: white;
         padding: 1rem;
         border-radius: 8px;
         margin: 1rem 0;
-    }
+    }}
     
-    .status-info {
+    .status-info {{
         background: linear-gradient(135deg, #2196F3, #1976D2);
         color: white;
         padding: 1rem;
         border-radius: 8px;
         margin: 1rem 0;
-    }
+    }}
     
-    .metric-card {
+    .metric-card {{
         background: #f8f9fa;
         padding: 1rem;
         border-radius: 8px;
         text-align: center;
         border: 1px solid #dee2e6;
-    }
+    }}
     
-    .action-button {
+    .action-button {{
         background: linear-gradient(45deg, #FF6B6B, #FF8E8E);
         color: white;
         border: none;
@@ -92,12 +92,12 @@ st.markdown("""
         cursor: pointer;
         transition: all 0.3s ease;
         box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
-    }
+    }}
     
-    .action-button:hover {
+    .action-button:hover {{
         transform: translateY(-2px);
         box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
-    }
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -232,11 +232,11 @@ def create_enhanced_voice_recorder():
             <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;">
                 <div>
                     <strong>🎯 Webhook:</strong> 
-                    <span style="font-family: monospace; font-size: 12px; opacity: 0.8;">{webhook_url[:50]}...</span>
+                    <span style="font-family: monospace; font-size: 12px; opacity: 0.8;">{{webhook_url[:50]}}...</span>
                 </div>
                 <div style="margin-top: 5px;">
                     <span style="background: rgba(76, 175, 80, 0.8); padding: 4px 12px; border-radius: 15px; font-size: 12px;">
-                        ✅ Auto-send: {'ON' if auto_send else 'OFF'}
+                        ✅ Auto-send: {{'ON' if auto_send else 'OFF'}}
                     </span>
                 </div>
             </div>
@@ -636,8 +636,8 @@ def create_enhanced_voice_recorder():
             
         }} catch (err) {{
             console.error('Error accessing microphone:', err);
-            statusDisplay.innerHTML = "❌ Error: " + err.message;
-            showWebhookStatus("❌ Microphone access denied", false);
+            statusDisplay.innerHTML = "❌ Error: " + err.name + ". " + err.message + ". Please ensure microphone access is granted and a microphone is connected.";
+            showWebhookStatus("❌ Microphone access denied or not found", false);
         }}
     }};
 
@@ -1007,4 +1007,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
