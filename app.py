@@ -52,6 +52,8 @@ if 'google_doc_url' not in st.session_state:
     st.session_state.google_doc_url = ""
 if 'live_content' not in st.session_state:
     st.session_state.live_content = ""
+if 'audio_recorded' not in st.session_state:
+    st.session_state.audio_recorded = False
 
 # Sidebar navigation
 st.sidebar.title("📚 Book Buddy Navigation")
@@ -78,7 +80,12 @@ book_types = [
 def send_to_webhook(payload):
     """Send data to the single hardcoded webhook"""
     try:
-        response = requests.post(WEBHOOK_URL, json=payload, timeout=30)
+        headers = {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Book-Buddy-App/1.0'
+        }
+        
+        response = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=30)
         
         if response.status_code == 200:
             st.session_state.webhook_response = response.json() if response.text else {"status": "success"}
@@ -90,7 +97,7 @@ def send_to_webhook(payload):
         return False, f"Error sending to webhook: {str(e)}"
 
 def create_voice_recorder():
-    """Create the enhanced voice recorder component with auto-send to single webhook"""
+    """Create the enhanced voice recorder component with direct webhook sending"""
     recorder_html = f"""
     <div id="voice-recorder" style="text-align: center; padding: 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 20px; margin: 20px 0; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
         <h3 style="color: white; margin-bottom: 20px; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">🎙️ Voice Recorder</h3>
@@ -259,63 +266,83 @@ def create_voice_recorder():
     }}
 
     async function sendAudioToWebhook(base64String) {{
+        console.log('Starting to send audio to webhook...');
         sendingStatus.style.display = 'block';
         sendingStatus.innerHTML = '📤 Sending audio to n8n webhook...';
         
+        const payload = {{
+            timestamp: new Date().toISOString(),
+            audio_data: base64String,
+            audio_format: 'audio/webm',
+            source: 'voice_recording',
+            app_name: 'Book Buddy',
+            recording_duration: seconds,
+            file_size: Math.round(base64String.length * 0.75), // Approximate file size
+            user_agent: navigator.userAgent
+        }};
+
+        console.log('Payload prepared:', {{
+            timestamp: payload.timestamp,
+            audio_data_length: payload.audio_data.length,
+            source: payload.source
+        }});
+        
         try {{
-            const payload = {{
-                timestamp: new Date().toISOString(),
-                audio_data: base64String,
-                audio_format: 'audio/webm',
-                source: 'voice_recording',
-                app_name: 'Book Buddy',
-                user_agent: navigator.userAgent,
-                recording_duration: seconds
-            }};
+            console.log('Sending to webhook:', '{WEBHOOK_URL}');
             
             const response = await fetch('{WEBHOOK_URL}', {{
                 method: 'POST',
                 headers: {{
                     'Content-Type': 'application/json',
+                    'User-Agent': 'Book-Buddy-App/1.0'
                 }},
                 body: JSON.stringify(payload)
             }});
             
+            console.log('Response status:', response.status);
+            console.log('Response ok:', response.ok);
+            
             if (response.ok) {{
+                const responseText = await response.text();
+                console.log('Response text:', responseText);
+                
                 sendingStatus.innerHTML = '✅ Audio sent successfully to n8n!';
                 sendingStatus.style.background = 'rgba(76, 175, 80, 0.3)';
                 
-                // Notify Streamlit
-                if (window.parent && window.parent.postMessage) {{
-                    window.parent.postMessage({{
-                        type: 'AUDIO_SENT_SUCCESS',
-                        data: base64String,
-                        duration: seconds
-                    }}, '*');
-                }}
+                // Store success info
+                window.lastWebhookResponse = {{
+                    success: true,
+                    status: response.status,
+                    response: responseText,
+                    timestamp: new Date().toISOString()
+                }};
+                
             }} else {{
-                throw new Error(`HTTP ${{response.status}}`);
+                const errorText = await response.text();
+                console.error('Webhook error response:', errorText);
+                throw new Error(`HTTP ${{response.status}}: ${{errorText}}`);
             }}
         }} catch (error) {{
+            console.error('Webhook send error:', error);
             sendingStatus.innerHTML = `❌ Failed to send: ${{error.message}}`;
             sendingStatus.style.background = 'rgba(244, 67, 54, 0.3)';
             
-            // Notify Streamlit of error
-            if (window.parent && window.parent.postMessage) {{
-                window.parent.postMessage({{
-                    type: 'AUDIO_SENT_ERROR',
-                    error: error.message
-                }}, '*');
-            }}
+            // Store error info
+            window.lastWebhookResponse = {{
+                success: false,
+                error: error.message,
+                timestamp: new Date().toISOString()
+            }};
         }}
         
-        // Hide status after 5 seconds
+        // Hide status after 10 seconds
         setTimeout(() => {{
             sendingStatus.style.display = 'none';
-        }}, 5000);
+        }}, 10000);
     }}
 
     recordBtn.onclick = async () => {{
+        console.log('Record button clicked');
         try {{
             const stream = await navigator.mediaDevices.getUserMedia({{ 
                 audio: {{
@@ -325,6 +352,8 @@ def create_voice_recorder():
                     sampleRate: 44100
                 }}
             }});
+            
+            console.log('Microphone access granted');
             
             // Setup audio context for visualization
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -342,14 +371,20 @@ def create_voice_recorder():
             isRecording = true;
             
             mediaRecorder.ondataavailable = e => {{
+                console.log('Audio data available:', e.data.size, 'bytes');
                 audioChunks.push(e.data);
                 fileSizeSpan.textContent = `${{Math.round(e.data.size / 1024)}} KB`;
             }};
             
             mediaRecorder.onstop = async () => {{
+                console.log('Recording stopped, processing audio...');
                 const blob = new Blob(audioChunks, {{ type: 'audio/webm' }});
+                console.log('Audio blob created:', blob.size, 'bytes');
+                
                 const arrayBuffer = await blob.arrayBuffer();
                 const base64String = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                console.log('Base64 conversion complete:', base64String.length, 'characters');
+                
                 base64output.value = base64String;
                 playback.src = URL.createObjectURL(blob);
                 playback.style.display = 'block';
@@ -365,6 +400,7 @@ def create_voice_recorder():
                 }}
             }};
 
+            console.log('Starting recording...');
             mediaRecorder.start(100);
             startTimer();
             waveform.style.display = 'block';
@@ -374,13 +410,15 @@ def create_voice_recorder():
             updateButtonStyles();
             
         }} catch (err) {{
-            statusText.innerHTML = "❌ Error: " + err.message;
             console.error('Error accessing microphone:', err);
+            statusText.innerHTML = "❌ Error: " + err.message;
         }}
     }};
 
     stopBtn.onclick = () => {{
+        console.log('Stop button clicked');
         if (mediaRecorder && isRecording) {{
+            console.log('Stopping recording...');
             mediaRecorder.stop();
             stopTimer();
             isRecording = false;
@@ -391,7 +429,10 @@ def create_voice_recorder():
         }}
     }};
 
+    // Initialize
     updateButtonStyles();
+    console.log('Voice recorder initialized');
+    console.log('Target webhook URL:', '{WEBHOOK_URL}');
     </script>
 
     <style>
@@ -682,7 +723,24 @@ if page == "🎙️ Voice Chat":
     st.markdown("### 🎙️ Voice Recording")
     st.markdown("**🔄 Auto-send enabled:** Recordings automatically send to n8n webhook after stopping.")
     
-    recorder_component = components.html(create_voice_recorder(), height=500)
+    # Add debug info
+    with st.expander("🔍 Debug Info", expanded=False):
+        st.write(f"**Webhook URL:** {WEBHOOK_URL}")
+        st.write("**Browser Console:** Open browser developer tools (F12) and check the Console tab for detailed logs")
+        if st.button("🧪 Test Direct Webhook"):
+            test_payload = {
+                "test": True,
+                "timestamp": datetime.now().isoformat(),
+                "message": "Direct test from Voice Chat page",
+                "source": "direct_test"
+            }
+            success, message = send_to_webhook(test_payload)
+            if success:
+                st.success(f"✅ Direct webhook test successful: {message}")
+            else:
+                st.error(f"❌ Direct webhook test failed: {message}")
+    
+    recorder_component = components.html(create_voice_recorder(), height=550)
     
     # Text-only send option
     col1, col2 = st.columns([1, 1])
