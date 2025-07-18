@@ -1,5 +1,8 @@
-install
 streamlit
 reportlab
 ebooklib
 requests
+pygments 
+mdurl 
+markdown-it-py 
+rich
